@@ -44,6 +44,7 @@ jobs:
             fi
           fi
 
+
       - name: Resolve project or workspace
         id: project
         run: |
@@ -71,16 +72,32 @@ jobs:
             fi
           fi
 
-      - name: List available schemes
+      - name: Resolve scheme
+        id: scheme
         run: |
-          xcodebuild "${{ steps.project.outputs.type }}" "${{ steps.project.outputs.path }}" -list
+          set -e
+          LIST=$(xcodebuild "${{ steps.project.outputs.type }}" "${{ steps.project.outputs.path }}" -list)
+          echo "$LIST"
+          SCHEMES=$(echo "$LIST" | awk '/Schemes:/{flag=1;next}flag{gsub(/^ +| +$/,"");if($0=="")exit;print}')
+          WANTED="${{ github.event.inputs.scheme }}"
+          if echo "$SCHEMES" | grep -Fxq "$WANTED"; then
+            CHOSEN="$WANTED"
+          else
+            CHOSEN=$(echo "$SCHEMES" | head -1)
+            echo "Scheme '$WANTED' not found — using '$CHOSEN'"
+          fi
+          if [ -z "$CHOSEN" ]; then
+            echo "No scheme found in project" >&2
+            exit 1
+          fi
+          echo "name=$CHOSEN" >> "$GITHUB_OUTPUT"
 
       - name: Build .app bundle (unsigned)
         run: |
           set -e
           xcodebuild \
             "${{ steps.project.outputs.type }}" "${{ steps.project.outputs.path }}" \
-            -scheme "${{ github.event.inputs.scheme }}" \
+            -scheme "${{ steps.scheme.outputs.name }}" \
             -sdk iphoneos \
             -configuration Release \
             -derivedDataPath "${{ github.workspace }}/DerivedData" \
@@ -98,6 +115,7 @@ jobs:
           APP_PATH=$(find "${{ github.workspace }}/DerivedData" -name '*.app' -type d | head -1)
           if [ -z "$APP_PATH" ]; then
             echo "No .app bundle found in DerivedData" >&2
+            find "${{ github.workspace }}/DerivedData" -type d >&2 || true
             exit 1
           fi
           echo "Found .app: $APP_PATH"
